@@ -1,0 +1,15 @@
+nicegui>=3.0
+pywebview>=5.0
+pandas>=2.2
+openpyxl>=3.1
+pydantic>=2.6
+bcrypt>=4.1
+reportlab>=4.0
+arabic-reshaper>=3.0
+python-bidi>=0.5
+num2words>=0.5.13
+pyinstaller>=6.0
+
+# development / tests only
+pytest>=8.0
+pytest-asyncio>=0.23
