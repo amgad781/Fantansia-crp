@@ -8,8 +8,7 @@
 
 ### الطريقة السريعة (عبر PowerShell أو موجه الأوامر):
 1. افتح مجلد البرنامج:
-   ```powershell
-   cd D:\zewiel\Freelance\Fantasia\Fantasiasystem\Fantasiaapp\fantasia_crp_v02\fantasia_crp
+  
    ```
 2. شغّل البرنامج باستخدام البيئة الافتراضية الجاهزة (`venv`):
    ```powershell
