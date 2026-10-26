@@ -174,6 +174,46 @@ def _change_password_dialog(ctx: AppContext) -> None:
     d.open()
 
 
+def _notifications_bell(ctx: AppContext) -> None:
+    try:
+        milestones = ctx.svc.instructors.pending_4_lesson_milestones()
+    except Exception:
+        milestones = []
+
+    count = len(milestones)
+    bell_btn = ui.button(icon="notifications").props(
+        f"flat round dense color={'warning' if count else 'secondary'}"
+    ).tooltip(f"{count} إشعار مستحقات مدربين (4 حصص)" if count else "لا توجد إشعارات جديدة")
+    if count:
+        with bell_btn:
+            ui.badge(str(count), color="negative").props("floating")
+
+    with ui.menu().classes("p-2").style("min-width:340px;max-width:420px"):
+        with ui.row().classes("items-center justify-between w-full px-2 py-1"):
+            ui.label("الإشعارات والتنبيهات").classes("font-bold text-sm")
+            if count:
+                ui.badge(f"{count} مستحق", color="warning").props("dense")
+        ui.separator()
+        if not count:
+            with ui.row().classes("items-center gap-2 p-3 text-sm muted"):
+                ui.icon("check_circle", color="positive", size="20px")
+                ui.label("لا توجد إشعارات جديدة حاليًا")
+        else:
+            from services.common import money
+            from ui.instructors_page import _pay_milestone_dialog
+            with ui.column().classes("w-full gap-2 p-1 max-h-80 overflow-auto"):
+                for m in milestones:
+                    with ui.card().classes("w-full p-2.5 gap-1").style("background:#FFF7ED;border:1px solid #FED7AA"):
+                        with ui.row().classes("items-center justify-between w-full"):
+                            ui.label("موعد صرف راتب مدرب").classes("font-bold text-xs text-primary")
+                            ui.badge("استحقاق 4 حصص", color="warning").props("dense")
+                        ui.label(f"أتم المدرب «{m['instructor_name']}» 4 حصص في مجموعة «{m['group_label']}».").classes("text-xs")
+                        with ui.row().classes("items-center justify-between w-full pt-1"):
+                            ui.label(f"المستحق: {money(m['amount'])} ج.م").classes("font-extrabold text-sm text-primary")
+                            ui.button("صرف الراتب", icon="payments", on_click=lambda _, ms=m: _pay_milestone_dialog(ctx, ms, on_saved=lambda: ui.navigate.to(ui.context.client.page.path))) \
+                                .props("unelevated dense no-caps color=primary size=sm")
+
+
 @contextmanager
 def app_shell(ctx: AppContext, active: NavItem) -> Iterator[None]:
     apply_page_theme()
@@ -239,6 +279,7 @@ def app_shell(ctx: AppContext, active: NavItem) -> Iterator[None]:
             ui.icon(active.icon, size="22px").style(f"color:{COLORS['primary']}")
             ui.label(active.label).classes("text-lg font-bold").style(f"color:{COLORS['navy']}")
         with ui.row().classes("items-center gap-2"):
+            _notifications_bell(ctx)
             with ui.column().classes("gap-0 items-end"):
                 ui.label(session.username).classes("text-sm font-bold leading-tight").style(f"color:{COLORS['navy']}")
                 role_key = str(session.role.value if hasattr(session.role, "value") else (session.role or ""))

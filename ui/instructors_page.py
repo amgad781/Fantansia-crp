@@ -38,6 +38,29 @@ def body(ctx: AppContext) -> None:
         return _period(f["kind"], d_from.get(), d_to.get())
 
     # ------------------------------------------------------------------ table
+    @ui.refreshable
+    def milestones_banner() -> None:
+        try:
+            ms = svc.instructors.pending_4_lesson_milestones()
+        except Exception:
+            ms = []
+        if not ms:
+            return
+        with ui.column().classes("w-full gap-2 p-3 rounded-xl mb-3").style("background:#FFF7ED;border:1px solid #FED7AA"):
+            with ui.row().classes("w-full items-center justify-between"):
+                with ui.row().classes("items-center gap-2"):
+                    ui.icon("notification_important", color="warning", size="24px")
+                    ui.label(f"تنبيهات استحقاق الراتب (إتمام 4 حصص) — يوجد {len(ms)} استحقاق جاهز للصرف").classes("font-bold text-sm")
+                ui.badge("حان موعد صرف الراتب", color="warning")
+            with ui.row().classes("w-full gap-2 flex-wrap"):
+                for m in ms:
+                    with ui.row().classes("items-center justify-between gap-3 p-3 rounded-lg bg-white").style("border:1px solid #FED7AA;flex:1;min-width:320px"):
+                        with ui.column().classes("gap-0"):
+                            ui.label(f"المدرب: {m['instructor_name']} — مجموعة: {m['group_label']}").classes("font-bold text-xs")
+                            ui.label(f"أتم 4 حصص ({m['period_from']} إلى {m['period_to']}) — المستحق: {money(m['amount'])} ج.م").classes("text-xs text-primary font-semibold")
+                        ui.button("صرف الراتب الآن", icon="payments", on_click=lambda _, item=m: _pay_milestone_dialog(ctx, item, refresh)) \
+                            .props("unelevated dense no-caps color=primary")
+
     def refresh() -> None:
         try:
             lo, hi = current_period()
@@ -60,6 +83,7 @@ def body(ctx: AppContext) -> None:
                      f"{money(sum(r['gross'] for r in rows))}  |  مكافآت: {money(sum(r.get('bonuses', 0) for r in rows))}  |  "
                      f"خصومات: {money(sum(r.get('deductions', 0) for r in rows))}  |  المدفوع: {money(sum(r['paid'] for r in rows))}  |  "
                      f"الصافي المستحق: {money(sum(r['net_due'] for r in rows))} ج.م")
+        milestones_banner.refresh()
 
     # ----------------------------------------------------------------- header
     with ui.row().classes("w-full items-center justify-between"):
@@ -70,6 +94,8 @@ def body(ctx: AppContext) -> None:
                 .props("outline no-caps color=primary")
             ui.button("تصدير كشوف الجميع PDF", icon="picture_as_pdf", on_click=lambda: export_all()).props("outline no-caps")
             ui.button("مدرب جديد", icon="add", on_click=lambda: _add_dialog(ctx, refresh)).props("unelevated no-caps")
+
+    milestones_banner()
 
     with card():
         with ui.row().classes("w-full items-center gap-3"):
@@ -99,13 +125,15 @@ def body(ctx: AppContext) -> None:
         C.action_buttons(table, [("details", "visibility", "التفاصيل والحصص", "primary"),
                                  ("adjust", "exposure", "مكافآت / خصومات المدرب", "warning"),
                                  ("pay", "payments", "تسجيل دفعة", "positive", "props.row.can_pay"),
-                                 ("custom_pdf", "tune", "طباعة مخصصة (مجموعة / أشهر / حصص / بند)", "secondary"),
+                                 ("cycles", "tune", "نظام صرف المجموعات (شهري / كل 4 حصص)", "secondary"),
+                                 ("custom_pdf", "settings", "طباعة مخصصة (مجموعة / أشهر / حصص / بند)", "grey-8"),
                                  ("pdf", "picture_as_pdf", "تصدير كشف PDF", "grey-8")])
         tot = ui.label("").classes("font-bold text-sm p-2 rounded-lg").style("background:var(--c-primary-light)")
         table.on("rowClick", lambda e: _details(ctx, e.args[1]["instructor_id"], current_period(), refresh))
         table.on("details", lambda e: _details(ctx, e.args["instructor_id"], current_period(), refresh))
         table.on("adjust", lambda e: _adjust_dialog(ctx, e.args, current_period(), refresh))
         table.on("pay", lambda e: _pay_dialog(ctx, e.args, current_period(), refresh))
+        table.on("cycles", lambda e: _group_pay_cycle_dialog(ctx, e.args["instructor_id"], refresh))
         table.on("custom_pdf", lambda e: _custom_print_dialog(
             ctx, e.args["instructor_id"], int(f["group"]) if f["group"] else None, current_period()))
 
@@ -130,6 +158,103 @@ def body(ctx: AppContext) -> None:
 
 
 # ============================================================================ dialogs
+def _group_pay_cycle_dialog(ctx: AppContext, instructor_id: int, on_saved=None) -> None:
+    svc = ctx.svc
+    ins = svc.repo.get(Sheet.INSTRUCTORS, instructor_id=instructor_id)
+    if not ins:
+        return
+    groups = svc.instructors.groups_for_instructor(instructor_id)
+    with ui.dialog() as d, ui.card().classes("p-5 gap-3").style("width:580px;max-width:96vw"):
+        with ui.row().classes("items-center justify-between w-full"):
+            with ui.row().classes("items-center gap-2"):
+                ui.icon("tune", color="primary", size="24px")
+                ui.label(f"نظام صرف المجموعات — {ins.name}").classes("text-lg font-bold")
+            ui.badge(f"{len(groups)} مجموعة", color="secondary")
+        ui.label("حدد نظام الصرف لكل مجموعة للمدرب: إما شهريًا أو كل 4 حصص منفذة.").classes("text-xs muted")
+
+        if not groups:
+            ui.label("لا توجد مجموعات مسندة لهذا المدرب حاليًا.").classes("text-sm text-warning p-3")
+            cycle_selectors = {}
+        else:
+            cycle_selectors = {}
+            with ui.column().classes("w-full gap-2 max-h-96 overflow-auto"):
+                for g in groups:
+                    with ui.row().classes("w-full items-center justify-between p-3 rounded-lg border").style("background:#F8FAFC"):
+                        with ui.column().classes("gap-0"):
+                            ui.label(g["label"]).classes("font-bold text-sm")
+                            rate_text = f"{money(g['rate'])} ج.م/س" if g["rate"] else "سعر غير محدد"
+                            ui.label(f"{rate_text}  |  الحصص المنفذة: {g['held_sessions_count']}").classes("text-xs muted")
+                        sel = ui.toggle(
+                            {"monthly": "شهري", "every_4_lessons": "كل 4 حصص"},
+                            value=g["pay_cycle"]
+                        ).props("dense no-caps unelevated toggle-color=primary")
+                        cycle_selectors[g["group_id"]] = sel
+
+        with ui.row().classes("justify-end gap-2 w-full pt-2"):
+            ui.button("إغلاق", on_click=d.close).props("flat no-caps")
+            if groups:
+                @guarded
+                def save_cycles() -> None:
+                    for gid, selector in cycle_selectors.items():
+                        svc.instructors.set_group_pay_cycle(gid, selector.value)
+                    d.close()
+                    ok("تم تحديث نظام الصرف للمجموعات بنجاح")
+                    if on_saved:
+                        on_saved()
+                ui.button("حفظ التغييرات", icon="check", on_click=save_cycles).props("unelevated no-caps color=primary")
+    d.open()
+
+
+def _pay_milestone_dialog(ctx: AppContext, m: dict, on_saved=None) -> None:
+    svc = ctx.svc
+    with ui.dialog() as d, ui.card().classes("p-5 gap-3").style("width:560px;max-width:96vw"):
+        with ui.row().classes("items-center justify-between w-full"):
+            with ui.row().classes("items-center gap-2"):
+                ui.icon("payments", color="positive", size="26px")
+                ui.label(f"صرف راتب إتمام 4 حصص — {m['instructor_name']}").classes("text-lg font-bold")
+            ui.badge("استحقاق 4 حصص", color="warning")
+
+        ui.label(f"المجموعة: {m['group_label']}  |  الفترة: من {m['period_from']} إلى {m['period_to']}").classes("text-xs muted")
+
+        with ui.column().classes("w-full gap-1 p-3 rounded-lg border").style("background:#F8FAFC"):
+            ui.label("الحصص الـ 4 المنفذة المشمولة في هذا الصرف:").classes("text-xs font-bold")
+            for s in m.get("sessions_summary", []):
+                t_str = f"{s['start_time']:%H:%M}–{s['end_time']:%H:%M}" if s.get("start_time") and s.get("end_time") else ""
+                with ui.row().classes("w-full items-center justify-between text-xs py-1 border-b last:border-none"):
+                    ui.label(f"حصة بتاريخ {s['date']} {t_str}")
+                    ui.label(f"{s['hours']:g} س × {money(s['rate'])} = {money(s['amount'])} ج.م").classes("font-semibold")
+
+        with ui.row().classes("w-full items-center justify-between p-3 rounded-xl").style("background:var(--c-primary-light);border:1px solid #FED7AA"):
+            ui.label(f"إجمالي الساعات: {m['total_hours']:g} ساعة").classes("text-sm font-semibold")
+            ui.label(f"المبلغ الإجمالي المستحق: {money(m['amount'])} ج.م").classes("text-base font-extrabold text-primary")
+
+        method = ui.toggle(config.PAYMENT_METHODS_AR, value="cash").props("no-caps unelevated toggle-color=primary")
+        notes = ui.input("ملاحظات إضافية (اختياري)", value=f"صرف مستحقات 4 حصص لمجموعة {m['cost_center']}").props("outlined dense").classes("w-full")
+
+        with ui.row().classes("justify-end gap-2 w-full pt-1"):
+            ui.button("إلغاء", on_click=d.close).props("flat no-caps")
+
+            @guarded
+            def do_pay() -> None:
+                pid = svc.instructors.record_payment(
+                    m["instructor_id"],
+                    m["period_from"],
+                    m["period_to"],
+                    float(m["amount"]),
+                    method=method.value,
+                    approved_by=ctx.session.username,
+                    notes=notes.value or "",
+                    group_id=m["group_id"],
+                    session_ids=m["session_ids"],
+                )
+                d.close()
+                ok(f"تم تسجيل صرف الراتب بنجاح (دفعة رقم #{pid})")
+                if on_saved:
+                    on_saved()
+            ui.button("تأكيد وصرف الراتب", icon="check_circle", on_click=do_pay).props("unelevated no-caps color=positive")
+    d.open()
+
+
 def _add_dialog(ctx: AppContext, on_saved) -> None:
     with ui.dialog() as d, ui.card().classes("p-5 gap-3").style("width:420px;max-width:96vw"):
         ui.label("مدرب جديد").classes("text-lg font-bold")
@@ -467,6 +592,17 @@ def _details(ctx: AppContext, instructor_id: int, period: tuple[date, date], on_
                 .props("outline no-caps color=secondary")
             ui.button("تعديل السعر", icon="edit", on_click=lambda: (panel.close(), _rate_dialog(ctx, row, on_changed))) \
                 .props("flat no-caps")
+            ui.button("نظام صرف المجموعات", icon="tune",
+                      on_click=lambda: (panel.close(), _group_pay_cycle_dialog(ctx, instructor_id, on_changed))) \
+                .props("outline no-caps color=accent")
+        if row.get("has_milestone_4_lessons"):
+            for ms in row.get("milestones_4_lessons", []):
+                with ui.row().classes("w-full items-center justify-between p-3 rounded-lg").style("background:#FFF7ED;border:1px solid #FED7AA"):
+                    with ui.column().classes("gap-0"):
+                        ui.label(f"استحقاق صرف راتب 4 حصص — {ms['group_label']}").classes("font-bold text-xs")
+                        ui.label(f"المستحق: {money(ms['amount'])} ج.م ({ms['period_from']} إلى {ms['period_to']})").classes("text-xs text-primary font-semibold")
+                    ui.button("صرف الراتب الآن", icon="payments", on_click=lambda _, item=ms: (panel.close(), _pay_milestone_dialog(ctx, item, on_changed))) \
+                        .props("unelevated dense no-caps color=primary")
         ui.separator()
         ui.label("الحصص المنفذة").classes("font-bold")
         lines = svc.instructors.sessions_for(instructor_id, lo, hi)

@@ -705,7 +705,8 @@ class GroupService:
         ]
 
     def add(self, cost_center: str, track: str = "", level: str = "", instructor_id: Optional[int] = None,
-            schedule: str = "", mode: str = "onsite", instructor_hourly_rate: Optional[float] = None) -> int:
+            schedule: str = "", mode: str = "onsite", instructor_hourly_rate: Optional[float] = None,
+            pay_cycle: str = "monthly") -> int:
         if not (cost_center or "").strip():
             raise ServiceError("اختر البرنامج.")
         if instructor_hourly_rate is not None and instructor_hourly_rate < 0:
@@ -720,6 +721,7 @@ class GroupService:
             self.repo.append(Sheet.GROUPS, dict(group_id=gid, cost_center=clean_cc, track=track,
                                                 level=level, instructor_id=instructor_id,
                                                 instructor_hourly_rate=instructor_hourly_rate,
+                                                pay_cycle=pay_cycle or "monthly",
                                                 schedule=schedule, mode=mode))
         progs = self.list_programs()
         if clean_cc not in progs and self.repo.get_setting("programs_ar") is not None:

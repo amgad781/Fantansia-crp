@@ -151,8 +151,14 @@ class InstructorService:
         for g in led.groups.values():
             if g.instructor_id:
                 r_str = f"{g.instructor_hourly_rate:g}" if getattr(g, "instructor_hourly_rate", None) else ""
-                lbl = f"{g.cost_center}" + (f" ({r_str}/س)" if r_str else "")
+                c_str = "كل 4 حصص" if getattr(g, "pay_cycle", "monthly") == "every_4_lessons" else "شهري"
+                rate_detail = f"{r_str}/س - {c_str}" if r_str else c_str
+                lbl = f"{g.cost_center} ({rate_detail})"
                 groups_by_ins.setdefault(g.instructor_id, []).append(lbl)
+        ms = self.pending_4_lesson_milestones()
+        ms_by_ins: dict[int, list[dict[str, Any]]] = {}
+        for m in ms:
+            ms_by_ins.setdefault(m["instructor_id"], []).append(m)
         out = []
         for ins in led.instructors.values():
             if status and ins.status != status:
@@ -170,6 +176,7 @@ class InstructorService:
             bonuses, deductions, adj_notes = (
                 (0.0, 0.0, "") if group_id else self._adjustments(led, ins.instructor_id, d_from, d_to)
             )
+            r_ms = ms_by_ins.get(ins.instructor_id, [])
             out.append(dict(
                 instructor_id=ins.instructor_id, name=ins.name, phone=ins.phone or "—",
                 status=ins.status, rate=ins.hourly_rate,
@@ -177,7 +184,12 @@ class InstructorService:
                 sessions=len(ss),
                 hours=round(sum(s.hours or 0 for s in ss), 2),
                 gross=gross, bonuses=bonuses, deductions=deductions, notes=adj_notes,
-                paid=paid, net_due=round(gross + bonuses - deductions - paid, 2)))
+                paid=paid, net_due=round(gross + bonuses - deductions - paid, 2),
+                milestones_4_lessons=r_ms,
+                has_milestone_4_lessons=bool(r_ms),
+                milestone_4_lessons_count=len(r_ms),
+                milestone_4_lessons_amount=round(sum(m["amount"] for m in r_ms), 2),
+            ))
         out.sort(key=lambda r: (r["status"] != "active", normalize_ar(r["name"])))
         return out
 
@@ -220,7 +232,8 @@ class InstructorService:
     def record_payment(self, instructor_id: int, d_from: date, d_to: date, amount: float,
                        method: str = "cash", approved_by: str = "",
                        bonuses: Optional[float] = None, deductions: Optional[float] = None,
-                       notes: str = "") -> int:
+                       notes: str = "", group_id: Optional[int] = None,
+                       session_ids: Optional[list[int]] = None) -> int:
         if d_to < d_from:
             raise ServiceError("نهاية الفترة قبل بدايتها.")
         row = next((r for r in self.summary(d_from, d_to) if r["instructor_id"] == instructor_id), None)
@@ -228,6 +241,16 @@ class InstructorService:
             raise ServiceError("المدرب غير موجود.")
         if amount is None or amount <= 0:
             raise ServiceError("المبلغ يجب أن يكون أكبر من صفر.")
+
+        selected_sessions = []
+        if session_ids:
+            all_sess = {s.session_id: s for s in self.repo.read(Sheet.SESSIONS) if s.instructor_id == instructor_id}
+            selected_sessions = [all_sess[sid] for sid in session_ids if sid in all_sess]
+            pay_hours = round(sum(s.hours or 0 for s in selected_sessions), 2)
+            pay_gross = round(sum((s.amount if s.amount is not None else (s.hours or 0) * (s.rate_applied or 0)) for s in selected_sessions), 2)
+        else:
+            pay_hours = row["hours"]
+            pay_gross = row["gross"]
 
         pend_rows = [p for p in self.repo.read(Sheet.INSTRUCTOR_PAYMENTS)
                      if p.instructor_id == instructor_id and p.status == "pending"
@@ -243,7 +266,7 @@ class InstructorService:
         if total_b < 0 or total_d < 0:
             raise ServiceError("المكافآت والخصومات لا يمكن أن تكون سالبة.")
 
-        effective_due = round(row["gross"] + total_b - total_d - row["paid"], 2)
+        effective_due = round(pay_gross + total_b - total_d - (0.0 if session_ids else row["paid"]), 2)
         if amount > effective_due + _EPS:
             raise ServiceError(f"المبلغ أكبر من الصافي المستحق ({effective_due:,.2f}).")
 
@@ -255,26 +278,34 @@ class InstructorService:
         )
 
         with self.repo.transaction():
-            if pend_rows:
+            if pend_rows and not session_ids:
                 target = pend_rows[0]
                 for extra in pend_rows[1:]:
                     self.repo.update(Sheet.INSTRUCTOR_PAYMENTS, {"id": extra.id}, {"status": "reversed"})
                 self.repo.update(Sheet.INSTRUCTOR_PAYMENTS, {"id": target.id}, dict(
                     period_from=d_from, period_to=d_to,
-                    total_hours=row["hours"], gross=row["gross"],
+                    group_id=group_id,
+                    total_hours=pay_hours, gross=pay_gross,
                     bonuses=this_b, deductions=this_d,
                     previous_paid=row["paid"], net=amount,
                     method=method, paid_on=today(), approved_by=approved_by or self.svc.user(),
                     notes=this_notes or None, status="paid"))
-                return target.id
-            pid = self.repo.next_id(Sheet.INSTRUCTOR_PAYMENTS)
-            self.repo.append(Sheet.INSTRUCTOR_PAYMENTS, dict(
-                id=pid, instructor_id=instructor_id, period_from=d_from, period_to=d_to,
-                total_hours=row["hours"], gross=row["gross"],
-                bonuses=this_b, deductions=this_d,
-                previous_paid=row["paid"], net=amount,
-                method=method, paid_on=today(), approved_by=approved_by or self.svc.user(),
-                notes=this_notes or None, status="paid"))
+                pid = target.id
+            else:
+                pid = self.repo.next_id(Sheet.INSTRUCTOR_PAYMENTS)
+                self.repo.append(Sheet.INSTRUCTOR_PAYMENTS, dict(
+                    id=pid, instructor_id=instructor_id,
+                    group_id=group_id,
+                    period_from=d_from, period_to=d_to,
+                    total_hours=pay_hours, gross=pay_gross,
+                    bonuses=this_b, deductions=this_d,
+                    previous_paid=0.0 if session_ids else row["paid"], net=amount,
+                    method=method, paid_on=today(), approved_by=approved_by or self.svc.user(),
+                    notes=this_notes or None, status="paid"))
+
+            if session_ids:
+                for sid in session_ids:
+                    self.repo.update(Sheet.SESSIONS, {"session_id": sid}, {"payment_id": pid})
         return pid
 
     def reverse_payment(self, payment_id: int) -> None:
@@ -283,15 +314,126 @@ class InstructorService:
             raise ServiceError("الدفعة غير موجودة أو ملغاة بالفعل.")
         with self.repo.transaction():
             self.repo.update(Sheet.INSTRUCTOR_PAYMENTS, {"id": payment_id}, {"status": "reversed"})
+            for s in self.repo.read(Sheet.SESSIONS):
+                if getattr(s, "payment_id", None) == payment_id:
+                    self.repo.update(Sheet.SESSIONS, {"session_id": s.session_id}, {"payment_id": None})
             if (getattr(p, "bonuses", 0) or 0) > 0 or (getattr(p, "deductions", 0) or 0) > 0:
                 pid = self.repo.next_id(Sheet.INSTRUCTOR_PAYMENTS)
                 self.repo.append(Sheet.INSTRUCTOR_PAYMENTS, dict(
-                    id=pid, instructor_id=p.instructor_id, period_from=p.period_from, period_to=p.period_to,
+                    id=pid, instructor_id=p.instructor_id,
+                    group_id=getattr(p, "group_id", None),
+                    period_from=p.period_from, period_to=p.period_to,
                     total_hours=p.total_hours, gross=p.gross,
                     bonuses=p.bonuses, deductions=p.deductions,
                     previous_paid=0, net=round(p.gross + p.bonuses - p.deductions, 2),
                     method=p.method, notes=getattr(p, "notes", None), status="pending",
                 ))
+
+    def set_group_pay_cycle(self, group_id: int, pay_cycle: str) -> None:
+        if pay_cycle not in ("monthly", "every_4_lessons"):
+            raise ServiceError("نظام الصرف يجب أن يكون «شهري» أو «كل 4 حصص».")
+        g = self.repo.get(Sheet.GROUPS, group_id=group_id)
+        if not g:
+            raise ServiceError("المجموعة غير موجودة.")
+        self.repo.update(Sheet.GROUPS, {"group_id": group_id}, {"pay_cycle": pay_cycle})
+
+    def groups_for_instructor(self, instructor_id: int) -> list[dict[str, Any]]:
+        led = Ledger(self.repo)
+        ins_groups = [g for g in led.groups.values() if g.instructor_id == instructor_id]
+        out = []
+        for g in sorted(ins_groups, key=lambda gr: gr.group_id):
+            cycle = getattr(g, "pay_cycle", "monthly") or "monthly"
+            r = g.instructor_hourly_rate if getattr(g, "instructor_hourly_rate", None) is not None else (
+                led.instructors[instructor_id].hourly_rate if instructor_id in led.instructors else 0
+            )
+            held = [s for s in led.sessions.values() if s.group_id == g.group_id and s.instructor_id == instructor_id and s.status == "held"]
+            out.append(dict(
+                group_id=g.group_id,
+                label=self.svc.groups.label(g),
+                cost_center=g.cost_center,
+                level=g.level or "",
+                schedule=g.schedule or "",
+                rate=r,
+                pay_cycle=cycle,
+                pay_cycle_label="كل 4 حصص" if cycle == "every_4_lessons" else "شهري",
+                held_sessions_count=len(held),
+            ))
+        return out
+
+    def pending_4_lesson_milestones(self, instructor_id: Optional[int] = None) -> list[dict[str, Any]]:
+        led = Ledger(self.repo)
+        paid_payments = [p for p in led.instructor_payments if p.status == "paid"]
+        milestones = []
+        for g in led.groups.values():
+            if getattr(g, "pay_cycle", "monthly") != "every_4_lessons":
+                continue
+            iid = g.instructor_id
+            if not iid:
+                continue
+            if instructor_id and iid != instructor_id:
+                continue
+            ins = led.instructors.get(iid)
+            if not ins:
+                continue
+            held_sessions = sorted(
+                (s for s in led.sessions.values()
+                 if s.group_id == g.group_id and s.instructor_id == iid and s.status == "held"),
+                key=lambda s: (s.date, s.start_time or time(0), s.session_id)
+            )
+            unpaid = []
+            for s in held_sessions:
+                pid = getattr(s, "payment_id", None)
+                if pid:
+                    if any(p.id == pid and p.status == "paid" for p in paid_payments):
+                        continue
+                is_covered = any(
+                    p.instructor_id == iid and p.status == "paid"
+                    and (getattr(p, "group_id", None) == g.group_id or getattr(p, "group_id", None) is None)
+                    and p.period_from <= s.date <= p.period_to
+                    for p in paid_payments
+                )
+                if not is_covered:
+                    unpaid.append(s)
+
+            if len(unpaid) >= 4:
+                num_batches = len(unpaid) // 4
+                for b_i in range(num_batches):
+                    batch = unpaid[b_i * 4 : (b_i + 1) * 4]
+                    amt = round(sum(
+                        (s.amount if s.amount is not None else (s.hours or 0) * (s.rate_applied or 0))
+                        for s in batch
+                    ), 2)
+                    hrs = round(sum(s.hours or 0 for s in batch), 2)
+                    milestones.append(dict(
+                        group_id=g.group_id,
+                        group_label=self.svc.groups.label(g),
+                        cost_center=g.cost_center,
+                        level=g.level or "",
+                        instructor_id=iid,
+                        instructor_name=ins.name,
+                        instructor_phone=ins.phone or "",
+                        unpaid_count=len(unpaid),
+                        batch_count=4,
+                        amount=amt,
+                        total_hours=hrs,
+                        period_from=batch[0].date,
+                        period_to=batch[-1].date,
+                        session_ids=[s.session_id for s in batch],
+                        sessions_summary=[
+                            dict(
+                                session_id=s.session_id,
+                                date=s.date,
+                                start_time=s.start_time,
+                                end_time=s.end_time,
+                                hours=s.hours or 0,
+                                rate=s.rate_applied or 0,
+                                amount=s.amount if s.amount is not None else round((s.hours or 0) * (s.rate_applied or 0), 2),
+                            )
+                            for s in batch
+                        ],
+                        message=f"حان موعد صرف راتب المدرب «{ins.name}» لمجموعة «{g.cost_center}»: أتم 4 حصص بمبلغ {amt:,.2f} ج.م",
+                    ))
+        return milestones
 
     def statement(self, instructor_id: int, d_from: Optional[date] = None, d_to: Optional[date] = None,
                   *, group_id: Optional[int] = None, group_ids: Optional[list[int]] = None,
@@ -309,6 +451,11 @@ class InstructorService:
                 raise ServiceError("الدفعة غير موجودة.")
             d_from = pay_rec.period_from
             d_to = pay_rec.period_to
+            if getattr(pay_rec, "group_id", None) and not group_id and not group_ids:
+                group_id = pay_rec.group_id
+            linked_sids = [s.session_id for s in self.repo.read(Sheet.SESSIONS) if getattr(s, "payment_id", None) == payment_id]
+            if linked_sids and session_ids is None:
+                session_ids = linked_sids
 
         if months and not d_from and not d_to:
             from services.common import month_bounds

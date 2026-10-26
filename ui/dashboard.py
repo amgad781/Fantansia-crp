@@ -52,6 +52,26 @@ def body(ctx: AppContext) -> None:
                         ui.label(f"يوجد {st['low_lessons_count']} طالب رصيد حصصهم المتبقية (حصتان أو أقل)").classes("font-semibold text-sm")
                     ui.button("عرض الطلاب", on_click=lambda: ui.navigate.to("/students")).props("flat dense no-caps color=negative")
 
+    try:
+        milestones = svc.instructors.pending_4_lesson_milestones()
+    except Exception:
+        milestones = []
+    if milestones:
+        from ui.instructors_page import _pay_milestone_dialog
+        with ui.column().classes("w-full gap-2 p-3 rounded-xl").style("background:#FFF7ED;border:1px solid #FED7AA"):
+            with ui.row().classes("w-full items-center justify-between"):
+                with ui.row().classes("items-center gap-2"):
+                    ui.icon("notification_important", color="warning", size="24px")
+                    ui.label(f"تنبيهات استحقاق رواتب المدربين ({len(milestones)} استحقاق إتمام 4 حصص)").classes("font-bold text-sm")
+                ui.button("صفحة المدرّبين", on_click=lambda: ui.navigate.to("/instructors")).props("flat dense no-caps color=warning")
+            with ui.row().classes("w-full gap-2 flex-wrap"):
+                for m in milestones:
+                    with ui.row().classes("items-center justify-between gap-3 p-3 rounded-lg bg-white").style("border:1px solid #FED7AA;flex:1;min-width:320px"):
+                        with ui.column().classes("gap-0"):
+                            ui.label(f"المدرب: {m['instructor_name']} — مجموعة: {m['group_label']}").classes("font-bold text-xs")
+                            ui.label(f"أتم 4 حصص ({m['period_from']} إلى {m['period_to']}) — المستحق: {money(m['amount'])} ج.م").classes("text-xs text-primary font-semibold")
+                        ui.button("صرف الراتب", icon="payments", on_click=lambda _, ms=m: _pay_milestone_dialog(ctx, ms, on_saved=lambda: ui.navigate.to("/dashboard"))).props("unelevated dense no-caps color=primary size=sm")
+
     with ui.row().classes("w-full gap-4 no-wrap").style("flex-wrap:wrap"):
         with card("حصص اليوم", style="flex:1 1 420px"):
             rows = [dict(r, k=r["session_id"], status_l=STATUS_AR.get(r["status"], r["status"])) for r in st["sessions"]]

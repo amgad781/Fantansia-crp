@@ -14,6 +14,7 @@ import config
 from core.audit import Action
 from core.schemas import Sheet
 from export.pdf_certificate import build_certificate_pdf, build_student_id_card_pdf
+from export.pdf_evaluation import build_evaluation_pdf
 from export.pdf_instructor import build_instructor_pdf
 from export.pdf_payslip import build_payroll_summary_pdf, build_payslip_pdf
 from export.pdf_receipt import build_receipt_pdf
@@ -187,3 +188,32 @@ def open_path(path: Path | str, folder: bool = False) -> None:
 
 def open_url(url: str) -> None:
     webbrowser.open(url)
+
+
+def export_student_evaluation(ctx, student_id: int, scores: dict = None,
+                               recommendation: str = "", group_id: int = None) -> Path:
+    """Generate and save a printable evaluation form for a student."""
+    led = ctx.svc.ledger()
+    st = led.students.get(student_id)
+    if not st:
+        from services.common import ServiceError
+        raise ServiceError("الطالب غير موجود.")
+    enrs = led.student_enrollments(student_id)
+    grp = None
+    if group_id:
+        grp = led.groups.get(group_id)
+    elif enrs:
+        grp = led.groups.get(enrs[0].group_id)
+    data = {
+        'student_name': st.name_ar,
+        'level': (grp.level if grp and grp.level else ""),
+        'group_label': (f"#{grp.group_id} \u2014 {grp.cost_center}" if grp else ""),
+        'date': str(date.today()),
+        'scores': scores or {},
+        'recommendation': recommendation,
+        'user': ctx.session.username,
+    }
+    path = config.EXPORT_DIR / "evaluations" / f"eval_{student_id}.pdf"
+    build_evaluation_pdf(path, data)
+    ctx.audit.log(Action.EXPORT_PDF, "Students", f"eval|{student_id}")
+    return path

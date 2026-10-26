@@ -31,6 +31,7 @@ NICEGUI_STORAGE_DIR = DATA_DIR / ".nicegui"
 ASSETS_DIR = RESOURCE_DIR / "assets"
 FONT_UI_FILE = ASSETS_DIR / "fonts" / "Cairo-Variable.ttf"   # UI (variable font)
 LOGO_FILE = ASSETS_DIR / "logo.png"
+CERTIFICATE_BG = RESOURCE_DIR / "certificate.jpg"
 ICON_FILE = ASSETS_DIR / "logo.ico"
 
 # --- Backups ---------------------------------------------------------------
@@ -95,6 +96,10 @@ FONT_PDF_BOLD = ASSETS_DIR / "fonts" / "Cairo-Bold.ttf"            # cannot use 
 ABSENCE_LIMIT = 1                  # receipt terms: one absence allowed during the diploma
 WHATSAPP_COUNTRY_CODE = "20"       # Egypt: 010xxxxxxxx -> 2010xxxxxxxx
 
+PAY_CYCLES_AR = {
+    "monthly": "شهري",
+    "every_4_lessons": "كل 4 حصص",
+}
 TRACKS_AR = ["روبوتيكس", "برمجة", "ذكاء اصطناعي", "أردوينو"]
 LEVELS_AR = ["مبتدئ", "متوسط", "متقدم"]
 AGE_GROUPS = ["5-7", "8-10", "11-14", "15-18"]

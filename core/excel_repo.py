@@ -163,7 +163,7 @@ def _read_rows(ws) -> tuple[list[str], list[tuple[int, dict[str, Any]]]]:
 def _sql_col_type(col: str) -> str:
     if col in ("student_id", "group_id", "enrollment_id", "serial", "session_id",
                "instructor_id", "employee_id", "id", "lessons_purchased",
-               "siblings_count", "sibling_rank", "reversal_of", "receipt_no"):
+               "siblings_count", "sibling_rank", "reversal_of", "receipt_no", "payment_id"):
         return "INTEGER"
     if col in ("amount_due", "amount", "hours", "rate_applied", "hourly_rate",
                "instructor_hourly_rate", "total_hours", "gross", "previous_paid",

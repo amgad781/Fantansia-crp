@@ -18,7 +18,19 @@ from export.pdf_common import BOLD, LINE, MUTED, NAVY, RED, RED_LIGHT, REG, TEXT
 
 
 def build_certificate_pdf(out_path: Path, data: dict[str, Any]) -> Path:
-    """Generate a branded A4 Landscape Graduation / Level Completion Certificate."""
+    """Generate a Graduation / Level Completion Certificate using certificate.jpg as the full-page
+    background image (A4 Landscape).  All dynamic text fields are overlaid on top of the image at
+    positions calibrated to the 1280×906 px certificate template.
+
+    Position fractions are measured from the bottom-left of the page (ReportLab convention):
+        Arabic name  : center-X, ~57 % height
+        English name : center-X, ~50 % height
+        Program stmt : center-X, ~43 % height
+        Notes        : center-X, ~37 % height
+        Date + ID    : center-X, ~22 % height
+        Right sig    : x=75 % W,  y=18 % H
+        Left  sig    : x=25 % W,  y=18 % H
+    """
     register_fonts()
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -27,82 +39,60 @@ def build_certificate_pdf(out_path: Path, data: dict[str, Any]) -> Path:
     c = rl_canvas.Canvas(str(out_path), pagesize=(W, H))
     c.setTitle(f"شهادة إتمام مستوى — {data.get('name_ar', '')}")
 
-    # Outer & inner decorative borders (Navy + Vibrant Orange)
-    m = 12 * mm
-    c.setStrokeColor(NAVY)
-    c.setLineWidth(3.5)
-    c.rect(m, m, W - 2 * m, H - 2 * m)
-
-    m2 = 15.5 * mm
-    c.setStrokeColor(RED)
-    c.setLineWidth(1.5)
-    c.rect(m2, m2, W - 2 * m2, H - 2 * m2)
-
-    # Corner accents
-    c.setFillColor(RED)
-    for cx, cy in ((m2, m2), (W - m2 - 6 * mm, m2), (m2, H - m2 - 6 * mm), (W - m2 - 6 * mm, H - m2 - 6 * mm)):
-        c.rect(cx, cy, 6 * mm, 6 * mm, stroke=0, fill=1)
-
-    # Logo & Academy Header
-    cx = W / 2
-    if config.LOGO_FILE.exists():
+    # ------------------------------------------------------------------ background
+    # Draw certificate.jpg as a full-page background (fallback: plain white).
+    if config.CERTIFICATE_BG.exists():
         try:
-            c.drawImage(str(config.LOGO_FILE), cx - 14 * mm, H - 46 * mm, 28 * mm, 24 * mm,
-                        preserveAspectRatio=True, mask="auto")
+            c.drawImage(str(config.CERTIFICATE_BG), 0, 0, W, H,
+                        preserveAspectRatio=False, mask="auto")
         except Exception:
-            pass
+            pass  # silently skip if image is corrupt / unreadable
 
-    draw_c(c, cx, H - 54 * mm, config.ACADEMY_FULL_NAME_AR, BOLD, 15, NAVY)
-    draw_c(c, cx, H - 61 * mm, "FANTASIA ACADEMY FOR TRAINING & TECHNOLOGY — WE MAKE THE NEXT STEP", BOLD, 9.5, RED)
+    # ------------------------------------------------------------------ helpers
+    cx = W / 2  # horizontal centre
 
-    # Certificate Title Banner
-    banner_w = 130 * mm
-    banner_h = 13 * mm
-    c.setFillColor(RED_LIGHT)
-    c.setStrokeColor(RED)
-    c.setLineWidth(1)
-    c.roundRect(cx - banner_w / 2, H - 79 * mm, banner_w, banner_h, 3 * mm, stroke=1, fill=1)
-    draw_c(c, cx, H - 74.5 * mm, "شهادة إتمام مستوى تدريبي  |  CERTIFICATE OF COMPLETION", BOLD, 13.5, NAVY)
-
-    # Body text
-    draw_c(c, cx, H - 91 * mm, "تشهد أكاديمية فانتازيا بأن المتدرب / المتدربة:", REG, 12, MUTED)
-
+    # ------------------------------------------------------------------ student name (Arabic)
+    # Large, bold, RED — ~57 % from bottom
     name_ar = data.get("name_ar") or "—"
+    draw_c(c, cx, H * 0.57, name_ar, BOLD, 22, RED)
+
+    # ------------------------------------------------------------------ student name (English)
+    # Smaller, NAVY — ~50 % from bottom
     name_en = data.get("name_en") or ""
-    draw_c(c, cx, H - 104 * mm, name_ar, BOLD, 22, RED)
     if name_en:
-        draw_c(c, cx, H - 113 * mm, name_en.upper(), BOLD, 13, NAVY)
+        draw_c(c, cx, H * 0.50, name_en.upper(), BOLD, 13, NAVY)
 
-    program = data.get("program") or "البرمجة والروبوتيكس"
-    level = data.get("level") or "مبتدئ"
+    # ------------------------------------------------------------------ program / level / grade statement
+    program    = data.get("program")     or "البرمجة والروبوتيكس"
+    level      = data.get("level")       or "مبتدئ"
     grade_label = data.get("grade_label") or "امتياز"
-    issue_date = str(data.get("issue_date") or date.today())
+    issue_date  = str(data.get("issue_date") or date.today())
 
-    stmt = f"قد أتمّ بنجاح متطلبات البرنامج التدريبي «{program}» — المستوى «{level}» بتقدير عام «{grade_label}»"
-    draw_c(c, cx, H - 127 * mm, stmt, BOLD, 13, TEXT)
+    stmt = (
+        f"قد أتمّ بنجاح متطلبات البرنامج التدريبي «{program}»"
+        f" — المستوى «{level}» بتقدير عام «{grade_label}»"
+    )
+    draw_c(c, cx, H * 0.43, stmt, BOLD, 13, TEXT)
 
+    # ------------------------------------------------------------------ notes line
+    # Muted, smaller — ~37 % from bottom
     notes = (data.get("notes") or "").strip()
-    if notes:
-        draw_c(c, cx, H - 136 * mm, notes, REG, 10.5, MUTED)
-    else:
-        draw_c(c, cx, H - 136 * mm, "مع أطيب التمنيات بدوام التفوق والابتكار في مجالات البرمجة والتكنولوجيا الحديثة.", REG, 10.5, MUTED)
+    notes_text = notes if notes else (
+        "مع أطيب التمنيات بدوام التفوق والابتكار في مجالات البرمجة والتكنولوجيا الحديثة."
+    )
+    draw_c(c, cx, H * 0.37, notes_text, REG, 10.5, MUTED)
 
-    # Metadata & Signatures at bottom
-    sig_y = 32 * mm
-    c.setStrokeColor(LINE)
-    c.setLineWidth(0.8)
+    # ------------------------------------------------------------------ issue date + student ID
+    # Centred, near bottom — ~22 % from bottom
+    draw_c(c, cx, H * 0.22 + 3 * mm, f"تاريخ الإصدار: {issue_date}", REG, 9.5, MUTED)
+    draw_c(c, cx, H * 0.22 - 3 * mm, f"رقم قيد الطالب: #{data.get('student_id', '')}", BOLD, 9.5, NAVY)
 
-    # Right: Instructor / Academic Supervisor
-    c.line(W - 85 * mm, sig_y, W - 30 * mm, sig_y)
-    draw_c(c, W - 57.5 * mm, sig_y - 6 * mm, "المشرف الأكاديمي / المدرّب", BOLD, 10, NAVY)
+    # ------------------------------------------------------------------ signature labels
+    # Right signature area (academic supervisor / trainer) — x=75 % W, y=18 % H
+    draw_c(c, W * 0.75, H * 0.18, "المشرف الأكاديمي / المدرّب", BOLD, 10, NAVY)
 
-    # Center: Issue date & Student ID
-    draw_c(c, cx, sig_y + 2 * mm, f"تاريخ الإصدار: {issue_date}", REG, 9.5, MUTED)
-    draw_c(c, cx, sig_y - 4 * mm, f"رقم قيد الطالب: #{data.get('student_id', '')}", BOLD, 9.5, NAVY)
-
-    # Left: Academy Director
-    c.line(30 * mm, sig_y, 85 * mm, sig_y)
-    draw_c(c, 57.5 * mm, sig_y - 6 * mm, "إدارة أكاديمية فانتازيا", BOLD, 10, NAVY)
+    # Left signature area (academy management) — x=25 % W, y=18 % H
+    draw_c(c, W * 0.25, H * 0.18, "إدارة أكاديمية فانتازيا", BOLD, 10, NAVY)
 
     c.showPage()
     c.save()

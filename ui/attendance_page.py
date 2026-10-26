@@ -136,6 +136,8 @@ def _session_menu(ctx: AppContext, se: dict, gid: int, refresh) -> None:
             def set_status(status: str) -> None:
                 ctx.svc.attendance.set_session_status(se["session_id"], status)
                 ok("تم تحديث حالة الحصة")
+                if status == "held":
+                    _check_4_lesson_alert(ctx, gid)
                 refresh()
             if se["status"] == "held":
                 ui.menu_item("تحديد الكل حاضر", on_click=all_present)
@@ -213,7 +215,21 @@ def _session_dialog(ctx: AppContext, sel: dict, refresh) -> None:
                                               instr.value, level.value, "held")
                 d.close()
                 ok("تمت إضافة الحصة")
+                _check_4_lesson_alert(ctx, g.group_id)
                 sel["month"] = f"{(when.get() or today()):%Y-%m}"
                 refresh()
             ui.button("حفظ", on_click=save).props("unelevated no-caps")
     d.open()
+
+
+def _check_4_lesson_alert(ctx: AppContext, gid: int) -> None:
+    try:
+        from services.common import money
+        ms = [m for m in ctx.svc.instructors.pending_4_lesson_milestones() if m["group_id"] == gid]
+        for m in ms:
+            ui.notify(
+                f"حان موعد صرف راتب المدرب «{m['instructor_name']}» لمجموعة «{m['group_label']}»: أتم 4 حصص بمبلغ {money(m['amount'])} ج.م",
+                type="warning", position="top", timeout=12000, close_button="إغلاق"
+            )
+    except Exception:
+        pass

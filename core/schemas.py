@@ -120,6 +120,11 @@ class CashFlowType(str, Enum):
     NON_CASH = "non_cash"
 
 
+class PayCycle(str, Enum):
+    MONTHLY = "monthly"
+    EVERY_4_LESSONS = "every_4_lessons"
+
+
 # ============================================================================
 # Cell-level coercion helpers (values coming back from Excel)
 # ============================================================================
@@ -247,6 +252,7 @@ class Group(Row):
     level: Optional[str] = None
     instructor_id: Optional[int] = None
     instructor_hourly_rate: Optional[Money] = Field(default=None, ge=0)
+    pay_cycle: PayCycle = PayCycle.MONTHLY
     schedule: Optional[str] = None
     mode: Mode = Mode.ONSITE
 
@@ -305,6 +311,7 @@ class ClassSession(Row):
     status: SessionStatus = SessionStatus.HELD
     rate_applied: Optional[Money] = Field(default=None, ge=0)   # frozen when marked held
     amount: Optional[Money] = None
+    payment_id: Optional[int] = None
 
     @model_validator(mode="after")
     def _compute(self) -> "ClassSession":
@@ -343,6 +350,7 @@ class RateHistoryEntry(Row):
 class InstructorPayment(Row):
     id: int
     instructor_id: int
+    group_id: Optional[int] = None
     period_from: ReqDate
     period_to: ReqDate
     total_hours: float = Field(ge=0)

@@ -64,6 +64,12 @@ def _group_dialog(ctx: AppContext, group=None, on_saved=None) -> None:
                 conflict_lbl.set_visibility(False)
 
         _check_conflicts()
+        with ui.row().classes("w-full items-center justify-between gap-3"):
+            ui.label("نظام صرف مستحقات المدرب:").classes("text-sm font-semibold")
+            pay_cycle = ui.toggle(
+                {"monthly": "شهري", "every_4_lessons": "كل 4 حصص"},
+                value=getattr(group, "pay_cycle", "monthly") if group else "monthly"
+            ).props("no-caps unelevated toggle-color=primary")
         mode = ui.toggle(MODE_AR, value=group.mode if group else "onsite").props("no-caps unelevated toggle-color=primary")
         with ui.row().classes("justify-end gap-2 w-full"):
             ui.button("إلغاء", on_click=d.close).props("flat no-caps")
@@ -75,11 +81,13 @@ def _group_dialog(ctx: AppContext, group=None, on_saved=None) -> None:
                     svc.groups.update(group.group_id, dict(
                         cost_center=prog.value, track=track.value, level=level.value,
                         instructor_id=instr.value, instructor_hourly_rate=r_val,
+                        pay_cycle=pay_cycle.value,
                         schedule=sched.value, mode=mode.value,
                     ))
                 else:
                     svc.groups.add(prog.value or "", track.value or "", level.value or "", instr.value,
-                                   sched.value or "", mode.value, instructor_hourly_rate=r_val)
+                                   sched.value or "", mode.value, instructor_hourly_rate=r_val,
+                                   pay_cycle=pay_cycle.value)
                 d.close()
                 ok("تم الحفظ")
                 if on_saved:
@@ -197,8 +205,11 @@ def body(ctx: AppContext) -> None:
             ins = led.instructors.get(g.instructor_id) if g.instructor_id else None
             eff_rate = g.instructor_hourly_rate if g.instructor_hourly_rate is not None else (ins.hourly_rate if ins else None)
             rate_str = f"{money(eff_rate)} ج.م/س" if eff_rate is not None else "—"
+            cycle = getattr(g, "pay_cycle", "monthly") or "monthly"
+            cycle_label = "كل 4 حصص" if cycle == "every_4_lessons" else "شهري"
             r = dict(id=g.group_id, program=g.cost_center, track=g.track or "—", level=g.level or "—",
                      instructor=ins.name if ins else "— بدون مدرب —", rate_label=rate_str,
+                     pay_cycle_label=cycle_label,
                      schedule=g.schedule or "—", mode=MODE_AR.get(g.mode, g.mode),
                      students=counts.get(g.group_id, 0))
             if flt["q"] and normalize_ar(flt["q"]) not in normalize_ar(" ".join(str(x) for x in r.values())):
@@ -229,7 +240,8 @@ def body(ctx: AppContext) -> None:
                 .props("outlined dense").style("width:160px")
         table = data_table([col("id", "#", sortable=True), col("program", "البرنامج", sortable=True),
                             col("track", "المسار"), col("level", "المستوى"), col("instructor", "المدرب"),
-                            col("rate_label", "سعر ساعة المدرب"), col("schedule", "الموعد"),
+                            col("rate_label", "سعر ساعة المدرب"), col("pay_cycle_label", "نظام الصرف"),
+                            col("schedule", "الموعد"),
                             col("mode", "النظام"), col("students", "عدد الطلاب"),
                             col("actions", "")], [], "id", no_data="لا توجد مجموعات بعد")
         C.action_buttons(table, [
